@@ -1,0 +1,244 @@
+"use strict"
+//http://mystorp.com/2015/11/07/nodejs-process-excel/
+nodejs 操作 excel
+07 NOVEMBER 2015 on node, excel
+今天女神给了我一个 excel 文档，说让我转成 HTML 格式，方便浏览。我自然是没有怨言的，奋斗两个小时后，成功的把 excel 转成了 HTML。特此码文一篇，记录 nodejs 如何操作 excel。
+
+这里用到的框架是 xlsx，一个用纯 JS 实现的 excel 操作库，是不是觉得很牛逼？我也觉得很牛逼。
+
+code first!
+
+/**
+ * 转换 excel 为 HTML 文件
+ *
+ * @file xlsx2json.js
+ * @author mystorp@gmail.com
+ *
+ */
+
+var fs = require('fs'),  
+    xlsx = require('xlsx');
+
+/**
+ * 解析 excel 为 JSON 对象，每个 excel 有多个 sheet 页，
+ * 每个 sheet 页里面有多行数据，每行数据有多列，最终 sheet
+ * 的数据存储为二维数组。
+ * 返回格式：
+ * {
+ *     "Sheet 1": [
+ *          [col1, col2, col3, ...],//第一行数据
+ *          [col1, col2, col3, ...],//第二行数据
+ *          ...
+ *     ],
+ *     "Sheet 2": []
+ * }
+ *
+ * @param {String} input - 要处理的 excel 源文件
+ * @return {Object} 返回
+ */
+function parse(input) {  
+    var book = xlsx.readFileSync(input), result = {};
+    //循环工作表中的每个 sheet 页
+    book.SheetNames.forEach(function(name){
+        //拿到当前 sheet 页对象
+        var sheet = book.Sheets[name],
+            //得到当前页内数据范围
+            range = xlsx.utils.decode_range(sheet['!ref']),
+            //保存数据范围数据
+            row_start = range.s.r, row_end = range.e.r,
+            col_start = range.s.c, col_end = range.e.c,
+            rows = [], row_data, i, addr, cell;
+        //按行对 sheet 内的数据循环
+        for(;row_start<=row_end;row_start++) {
+            row_data = [];
+            //读取当前行里面各个列的数据
+            for(i=col_start;i<=col_end;i++) {
+                addr = xlsx.utils.encode_col(i) + xlsx.utils.encode_row(row_start);
+                cell = sheet[addr];
+                //如果是链接，保存为对象，其它格式直接保存原始值
+                if(cell.l) {
+                    row_data.push({text: cell.v, link: cell.l.Target});
+                } else {
+                    row_data.push(cell.v);
+                }
+            }
+            rows.push(row_data);
+        }
+        //保存当前页内的数据
+        result[name] = rows;
+    });
+    return result;
+}
+
+/**
+ * 根据模板页生成最终的页面
+ *
+ * @param file 要生成文件的路径
+ */
+function createPage(file, head, catalogs) {  
+    var src = fs.readFileSync('template.html', {encoding: 'utf-8'}), o;
+    o = {head:head, catalogs: catalogs};
+    src = src.replace(/\{(.*?)\}/g, function(_, key){
+        return (key in o) ? JSON.stringify(o[key]) : _;
+    });
+    fs.writeFileSync(file, src);
+}
+
+if(module === require.main) {  
+    var files = [
+        {filename: '1.xls', text: 'jhs', html: 'index_jhs.html'},
+        {filename: '2.xls', text: 'tm', html: 'index.html'}
+    ];
+    var prefix = "./";
+    files.forEach(function(c){
+        var result = parse(c.filename), dir = prefix + c.text, k, catalogs = [], i;
+        fs.existsSync(dir) || fs.mkdirSync(dir);
+        i = 1;
+        for(k in result) {
+            fs.writeFileSync(dir + '/' + i + '.json', JSON.stringify(result[k]));
+            catalogs.push([k, i]);
+            i++;
+        }
+        createPage(prefix + c.html, c, catalogs);
+    });
+}
+页面的最终效果看这里，很简陋，表吐槽，还是说说怎么使用 xlsx 吧。
+
+基础知识
+要理解 xlsx 的使用，首先要理解工作表，sheet 页，单元格。
+
+工作表就是我们常见的 excel 文件，可能的文件后缀名是：xls，xlsx，在下文中，我会用单词 workbook 表示工作表。关于工作表你可能还知道其它的后缀名格式，这里就不细说了。
+
+每个 excel 文件有多个页面，看下图：
+
+sheet 页
+
+这张图里面有 3 个 sheet 页，它们的名字分别是：“Sheet 1”、“Sheet 2”、“Sheet 3”，每个 sheet 页表示一张表格。上面图中是 微软电子表格软件，当我新建一个电子表格的时候，它已经自动给我创建了 3 张 sheet。如果一个 sheet 足够使用，可以把其它的 sheet 删除掉。
+
+单元格的概念就很好理解了，就是每个 sheet 里面的一个个格子，每个格子里面可以存放数据，根据数据类型的不同，单元格格式也可能发生变化。在 xlsx 中，支持的格式包括：Boolean, String, Number, Date 等。
+
+理解了上面的东西，下面讲代码应该就好理解多了。
+
+如何安装 xlsx
+使用 xlsx 之前，必须在当前的系统中安装这个库，打开你的控制台，执行：
+
+npm install xlsx  
+如果你希望安装在全局库路径中，执行这个：
+
+npm install -g xlsx  
+读取一个工作表文件
+安装完成之后就可以开始读工作表了，看下面的代码：
+
+//引入刚刚安装 xlsx 库
+var xlsx = require('xlsx');  
+//读取本地的工作表
+var workbook = xlsx.readFileSync('test.xls');  
+看，这样就成功的读取了 test.xls 文件并且返回了工作表对象。上面使用了 xlsx.readFileSync 来读取 xls 文件，你也可以使用 xlsx.read 或 xlsx.readFile 读取 excel 文件。本质上这三个方法是没什么分别的，最后都是调用了同一个闭包函数 readSync来处理 excel 文件。这里需要说明，这个方法是同步执行的，不存在异步回调，xlsx也没有提供异步 API。
+
+工作表的下属 - sheet
+拿到工作表对象之后，必须要读取 sheet 页才能获取到单元格数据，工作表本身只是作为一个管理容器管理 sheet 页，sheet页才是数据容器。看代码：
+
+//获取第一个 sheet 的名字
+var firstSheetName = workbook.SheetNames[0];  
+//获取 sheet 对象
+var sheet = workbook.Sheets[firstSheetName];  
+上面的代码说明了如何拿到工作表中第一个 sheet 页，如果你希望获取所有的 Sheet 对象，可以循环 workbook.SheetNames 这个数组，在循环中依次通过 workbook.Sheets[name_of_sheet] 获取到对应的 Sheet 对象，如果你不关心要处理的 sheet 的顺序，你也可以使用 for(sheetName in workbook.Sheets)。
+
+读取单元格
+在 sheet 中读单元格是通过索引下标的形式，像这样：sheet["A1"] 表示读取第一个单元格（下文用 A1 泛指这种表示方法）。这种方式保持了 excel 软件里面的用法，很好理解，但是不利于程序编码。通常处理二维数据，最容易想到的就是通过行列索引直接定位一个单元格，但是 sheet 并不支持这种方式，好在 xlsx 提供了几个函数，方便在行列索引和“A1”索引相互转换：
+
+xlsx.utils.encode_row(row_index) 将基于 0 的索引转换为基于 1 的索引，之所以有这个方法是因为，程序里面下标都是从 0 开始计算，而 excel 软件却是从 1 开始计算，下同
+xlsx.utils.decode_row(row) 与上个方法相反，将基于 1 的索引转换为基于 0 的索引
+xlsx.utils.encode_col(col_index) 将基于 0 的索引转换为 ABCD 这种列；excel 表格软件中，列的表示是A, B, C, D，这个函数将 A, B, C, D 对应到 0, 1, 2, 3
+xlsx.utils.decode_col(col) 与上个方法相反，将 ABCD 这种列索引转换为基于 0 的索引
+xlsx.utils.encode_cell(object) 将一个行列对象转换为 A1 这种字符串
+xlsx.utils.decode_cell(addr) 与上个方法相反，将 A1 这种字符串转换为一个行列对象
+xlsx.utils.encode_range(obj) 将一个范围对象转换为 A1:G8 这种字符串
+xlsx.utils.decode_range(addr) 与上个方法相反，将 A1:G8 这种字符串转换为行列对象
+举个栗子，假设要读第 8 行第 8 列这个单元格的数据，首先得到它的 A1 表示法：
+
+// ===========    第一种方法    ==============
+var row = xlsx.utils.encode_row(7);  
+//输出：'8'
+var col = xlsx.utils.encode_col(7);  
+//输出：'H'
+var addr = col + row;// => H8
+
+// ===========    第二种方法    ==============
+//注意这里的行列对象表示形式
+var addr = xlsx.utils.encode_cell({r: 7, c: 7});  
+//输出：H8
+//如果执行 xlsx.utils.decode_cell('H8'); 则
+//输出：{r: 7, c: 7}
+其实，第二种方法就是第一种方法的升级版，可以少写一些代码。
+
+再举个栗子，假设已知需要获取 B4:D9 范围的数据，也就是 B, C, D 3 列和 4 5 6 7 8 9 6 行的交叉区域：
+
+var range = xlsx.utils.decode_range('B4:D9')  
+//输出：
+{
+  s: { c: 1, r: 3 },
+  e: { c: 3, r: 8 }
+}
+我不知道看到这里的客官您的内心感受，但是我已经忍不住吐槽了，尽管我已经理解了这个万恶的输出对象，但还是要说，这他妈的的什么玩意啊。。。用户体验太差了吧。
+
+解释下吧。输出中的 s, e 表示 start, end。也就是说这个输出表示了开始的行索引和列索引，结束的行索引和列列索引。剩下的就是你自己循环得到它的数据了。 最后强调下，使用 A1 这种下标索引的时候，A1 一定要写成 A1，写成小写的就不对了。
+
+单元格对象的秘密
+艰难的了解了如何获取单元格，现在说说单元格的秘密。你可能会说：单元格不就是一串文本吗，有什么秘密呢？在我使用这个库之前，我也是有这种想法的，但是最终看到单元格的表示形式之后，我才明白我错了。先上代码：
+
+var cell = sheet['A1'];  
+console.log(cell);  
+输出：
+
+{
+    "v": "单元格的原始值",
+    "w": "单元格格式化之后的文本",
+    "t": "数据类型",
+    "f": "cell formula",
+    "r": "富文本",
+    "h": "富文本的HTML表示形式",
+    "c": "注释",
+    "z": "数字格式化模板",
+    "l": "如果当前单元格内容是超链接，这里存储了超链接内容",
+    "s": "单元格样式"
+}
+看到了吧，不要以为获取到单元对象，就没事了，这里还有一堆属性等着你临幸呢。每个属性的解释以属性值得形式给出了。通常，获取到的单元格可能不会有上面全部的属性，如：纯文本单元格就没有 "r", "h", "l" 等属性。
+
+还有，日期单元格的原始值 v 和格式化值 w 不一样，因为日期在 excel 以数字形式存储；超链接单元格的文本是 v，而链接是 l.Target。
+
+平时使用单元格的时候，如果处理的表格不是很复杂，获取 v 属性的值就 OK 了。如果太复杂，还是用 excel 软件处理吧，这里就不深入这个单元格了。
+
+如何写 excel 文件
+这个暂时没用到，先留着，以后补吧。
+
+最新最早最热
+2条评论
+haihai
+haihai
+?
+1月14日回复顶转发
+cnxiongr
+cnxiongr
+？
+1月14日回复顶转发
+社交帐号登录:
+微信
+微博
+QQ
+人人
+更多?
+
+
+说点什么吧…
+发布
+Powered by 多说
+张垚
+Read more posts by this author.
+
+重新认识 Emmet
+最早了解 Emmet 已经是几年前的事情了，记得当时非常吃惊于于它的 HTML 生成能力，但也只是吃了一惊，并没有太在意，后来在项目中也并未使用过它。今天看一些前端资料的时候无意中又看到了 Emmet ，本来已经忽略了，但是后来手写 HTML 的时候发现速度真的很慢，而且 sublime text 3…
+hello, world
+console.log("hello, world!");…
+回眸瞬间 ? 2016Proudly published with Ghost
+鄂 ICP 备 15020073 号
